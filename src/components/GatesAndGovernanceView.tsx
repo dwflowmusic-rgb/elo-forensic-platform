@@ -44,6 +44,36 @@ export function GatesAndGovernanceView({
   const [zipPasswords, setZipPasswords] = useState<Record<string, string>>({});
   const [unlockingPath, setUnlockingPath] = useState<string | null>(null);
   const [unlockFeedback, setUnlockFeedback] = useState<string | null>(null);
+  const [enrichingDb, setEnrichingDb] = useState(false);
+
+  const handleEnrichUnlocked = useCallback(async () => {
+    setEnrichingDb(true);
+    setUnlockFeedback(null);
+    try {
+      const resp = await fetch('/api/cases/enrich-unlocked', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = (await resp.json()) as {
+        ok?: boolean;
+        files_processed?: number;
+        chunks_inserted?: number;
+        ocr_pages_processed?: number;
+        error?: string;
+      };
+      if (!resp.ok || !data.ok) {
+        throw new Error(data.error ?? 'Falha ao re-ingerir desbloqueados.');
+      }
+      setUnlockFeedback(
+        `Banco enriquecido: ${data.files_processed ?? 0} arquivos processados, ${data.chunks_inserted ?? 0} novos chunks indexados no FTS5 (páginas OCR: ${data.ocr_pages_processed ?? 0}).`,
+      );
+    } catch (err: unknown) {
+      setUnlockFeedback(err instanceof Error ? err.message : String(err));
+    } finally {
+      setEnrichingDb(false);
+    }
+  }, []);
 
   const fetchProtectedZips = useCallback(async () => {
     try {
@@ -56,6 +86,34 @@ export function GatesAndGovernanceView({
       // Silencioso para nao bloquear painel principal
     }
   }, []);
+
+  const handleIgnoreZip = useCallback(
+    async (zipPath: string) => {
+      setUnlockingPath(zipPath);
+      setUnlockFeedback(null);
+      try {
+        const resp = await fetch('/api/cases/ignore-zip', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            zipPath,
+            reason: 'Ignorado pelo operador no painel (duplicata ou não pertinente).',
+          }),
+        });
+        const data = (await resp.json()) as { ignored?: boolean; error?: string };
+        if (!resp.ok || !data.ignored) {
+          throw new Error(data.error ?? 'Falha ao ignorar ZIP.');
+        }
+        setUnlockFeedback(`Arquivo marcado como ignorado no log auditável: ${zipPath}`);
+        await fetchProtectedZips();
+      } catch (err: unknown) {
+        setUnlockFeedback(err instanceof Error ? err.message : String(err));
+      } finally {
+        setUnlockingPath(null);
+      }
+    },
+    [fetchProtectedZips],
+  );
 
   const handleUnlockZip = useCallback(
     async (zipPath: string, useLookup: boolean) => {
@@ -447,14 +505,25 @@ export function GatesAndGovernanceView({
               <span className="font-mono">Senhas.md</span> para extrair em <span className="font-mono">F:\</span> com SHA-256.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => void fetchProtectedZips()}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 text-xs font-medium hover:bg-slate-50 cursor-pointer shrink-0"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            Reescanear ZIPs
-          </button>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              disabled={enrichingDb}
+              onClick={() => void handleEnrichUnlocked()}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-700 text-white text-xs font-medium hover:bg-emerald-800 disabled:opacity-60 cursor-pointer shrink-0"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${enrichingDb ? 'animate-spin' : ''}`} />
+              {enrichingDb ? 'Indexando...' : 'Re-ingerir Desbloqueados & OCR'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void fetchProtectedZips()}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 text-xs font-medium hover:bg-slate-50 cursor-pointer shrink-0"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Reescanear ZIPs
+            </button>
+          </div>
         </div>
 
         {unlockFeedback && (
@@ -471,7 +540,9 @@ export function GatesAndGovernanceView({
                 className={`p-4 rounded-md border ${
                   item.status === 'UNLOCKED'
                     ? 'bg-emerald-50/60 border-emerald-200'
-                    : 'bg-amber-50/60 border-amber-200'
+                    : item.status === 'IGNORED'
+                      ? 'bg-slate-100/80 border-slate-200 opacity-80'
+                      : 'bg-amber-50/60 border-amber-200'
                 }`}
               >
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
@@ -481,6 +552,11 @@ export function GatesAndGovernanceView({
                         <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
                           <Unlock className="w-3.5 h-3.5" />
                           DESBLOQUEADO ({item.extracted_files_count} arquivos)
+                        </span>
+                      ) : item.status === 'IGNORED' ? (
+                        <span className="inline-flex items-center gap-1 text-xs font-semibold text-slate-600">
+                          <XCircle className="w-3.5 h-3.5" />
+                          IGNORADO PELO OPERADOR
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-800">
@@ -502,7 +578,7 @@ export function GatesAndGovernanceView({
                     )}
                   </div>
 
-                  {item.status !== 'UNLOCKED' && (
+                  {item.status === 'LOCKED_ALERT' && (
                     <div className="flex flex-wrap items-center gap-2 shrink-0">
                       <input
                         type="password"
@@ -531,6 +607,14 @@ export function GatesAndGovernanceView({
                           Usar Senhas.md
                         </button>
                       )}
+                      <button
+                        type="button"
+                        disabled={unlockingPath === item.zip_path}
+                        onClick={() => void handleIgnoreZip(item.zip_path)}
+                        className="px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 text-xs font-medium hover:bg-slate-100 disabled:opacity-60 cursor-pointer"
+                      >
+                        Ignorar
+                      </button>
                     </div>
                   )}
                 </div>

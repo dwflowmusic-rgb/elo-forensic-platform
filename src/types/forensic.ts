@@ -382,7 +382,7 @@ export interface ProtectedZipItem {
   sample_members: string[];
   has_lookup_password: boolean;
   operation: string;
-  status: 'LOCKED_ALERT' | 'UNLOCKED';
+  status: 'LOCKED_ALERT' | 'UNLOCKED' | 'IGNORED';
   extracted_dir: string;
   unlocked_at_utc: string;
   extracted_files_count: number;

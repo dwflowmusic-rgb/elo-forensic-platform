@@ -173,6 +173,27 @@ async function runSyntheticCasePipeline(caseIdInput: string): Promise<EnrichedCa
   return payload;
 }
 
+async function loadRealCaseFromDest(destRoot: string): Promise<EnrichedCasePayload | null> {
+  if (!destRoot) {
+    return null;
+  }
+  const dbPath = path.join(destRoot, '01_BANCO_ORGANIZADO', 'case_master_organized.sqlite');
+  try {
+    await fs.access(dbPath);
+  } catch {
+    return null;
+  }
+  const scriptPath = path.join(REPO_ROOT, 'tools', 'load_real_case_for_web.py');
+  const { stdout } = await execFileAsync(PYTHON_BIN, [scriptPath, '--dest', destRoot], {
+    cwd: REPO_ROOT,
+    env: { ...process.env, PYTHONPATH: PYTHON_PATH_VAL },
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  const payload = JSON.parse(stdout.trim()) as EnrichedCasePayload;
+  cachedActiveCase = payload;
+  return payload;
+}
+
 async function ensureBootstrapped(): Promise<void> {
   if (cachedGatesReport && cachedActiveCase) {
     return;
@@ -184,7 +205,13 @@ async function ensureBootstrapped(): Promise<void> {
           cachedGatesReport ? Promise.resolve(cachedGatesReport) : runPythonGates(),
           cachedActiveCase
             ? Promise.resolve(cachedActiveCase)
-            : runSyntheticCasePipeline('CASO-PENAL-EDRM20'),
+            : (async () => {
+                const realCase = await loadRealCaseFromDest(DEFAULT_LIVE_DEST);
+                if (realCase) {
+                  return realCase;
+                }
+                return runSyntheticCasePipeline('CASO-PENAL-EDRM20');
+              })(),
         ]);
       } finally {
         bootstrapPromise = null;
@@ -414,6 +441,63 @@ async function startServer(): Promise<void> {
       }
       const message = err instanceof Error ? err.message : String(err);
       res.status(400).json({ unlocked: false, error: message });
+    }
+  });
+
+  app.post('/api/cases/ignore-zip', async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as {
+        dest?: unknown;
+        zipPath?: unknown;
+        reason?: unknown;
+      };
+      const destParam =
+        typeof body.dest === 'string' && body.dest.trim().length > 0
+          ? body.dest.trim()
+          : DEFAULT_LIVE_DEST;
+      const zipPath = typeof body.zipPath === 'string' ? body.zipPath.trim() : '';
+      if (!zipPath) {
+        res.status(400).json({ error: 'zipPath é obrigatório.' });
+        return;
+      }
+      const scriptPath = path.join(REPO_ROOT, 'tools', 'unlock_protected_zip.py');
+      const args = [scriptPath, '--dest', destParam, '--zip-path', zipPath, '--ignore'];
+      if (typeof body.reason === 'string' && body.reason.trim().length > 0) {
+        args.push('--reason', body.reason.trim());
+      }
+      const { stdout } = await execFileAsync(PYTHON_BIN, args, {
+        cwd: REPO_ROOT,
+        env: { ...process.env, PYTHONPATH: PYTHON_PATH_VAL },
+        maxBuffer: 4 * 1024 * 1024,
+      });
+      res.json(JSON.parse(stdout.trim()));
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(400).json({ ignored: false, error: message });
+    }
+  });
+
+  app.post('/api/cases/enrich-unlocked', async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as { dest?: unknown };
+      const destParam =
+        typeof body.dest === 'string' && body.dest.trim().length > 0
+          ? body.dest.trim()
+          : DEFAULT_LIVE_DEST;
+      const scriptPath = path.join(REPO_ROOT, 'tools', 'enrich_unlocked_and_ocr.py');
+      const { stdout } = await execFileAsync(
+        PYTHON_BIN,
+        [scriptPath, '--dest', destParam, '--include-vault-ocr'],
+        {
+        cwd: REPO_ROOT,
+        env: { ...process.env, PYTHONPATH: PYTHON_PATH_VAL },
+        maxBuffer: 8 * 1024 * 1024,
+      });
+      await loadRealCaseFromDest(destParam);
+      res.json(JSON.parse(stdout.trim()));
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ ok: false, error: message });
     }
   });
 

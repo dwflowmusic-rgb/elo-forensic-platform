@@ -83,20 +83,39 @@ def build_or_read_lookup(dest_root: Path, senhas_md_path: Path | None) -> dict[s
 
 def read_unlock_audit(dest_root: Path) -> dict[str, dict[str, Any]]:
     audit_file = dest_root / "00_GOVERNANCA_E_AUDITORIA" / "zip_unlock_audit.jsonl"
-    unlocked: dict[str, dict[str, Any]] = {}
+    records: dict[str, dict[str, Any]] = {}
     if not audit_file.exists():
-        return unlocked
+        return records
     for line in audit_file.read_text(encoding="utf-8", errors="replace").splitlines():
         s = line.strip()
         if not s:
             continue
         try:
             obj = json.loads(s)
-            if isinstance(obj, dict) and obj.get("status") == "UNLOCKED":
-                unlocked[str(obj.get("zip_path", ""))] = obj
+            if isinstance(obj, dict) and obj.get("status") in ("UNLOCKED", "IGNORED"):
+                records[str(obj.get("zip_path", ""))] = obj
         except ValueError:
             continue
-    return unlocked
+    return records
+
+
+def ignore_zip_in_audit(zip_path: Path, dest_root: Path, reason: str) -> dict[str, Any]:
+    """Registra decisao auditavel do operador para ignorar um ZIP protegido."""
+    gov_dir = dest_root / "00_GOVERNANCA_E_AUDITORIA"
+    gov_dir.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "ts_utc": _utc_now(),
+        "status": "IGNORED",
+        "zip_path": str(zip_path),
+        "filename": zip_path.name,
+        "reason": reason or "Ignorado pelo operador (duplicata ou nao pertinente).",
+    }
+    audit_file = gov_dir / "zip_unlock_audit.jsonl"
+    with open(audit_file, "a", encoding="utf-8") as afh:
+        afh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        afh.flush()
+        os.fsync(afh.fileno())
+    return {"ignored": True, **entry}
 
 
 def scan_protected_zips(
@@ -123,6 +142,7 @@ def scan_protected_zips(
             zp_str = str(zp)
             lookup_hit = lookup.get(zp.name)
             audit_hit = unlocked_map.get(zp_str)
+            item_status = str(audit_hit.get("status")) if audit_hit else "LOCKED_ALERT"
             items.append(
                 {
                     "zip_path": zp_str,
@@ -131,7 +151,7 @@ def scan_protected_zips(
                     "sample_members": enc_members[:5],
                     "has_lookup_password": lookup_hit is not None,
                     "operation": lookup_hit.get("operation", "") if lookup_hit else "",
-                    "status": "UNLOCKED" if audit_hit else "LOCKED_ALERT",
+                    "status": item_status,
                     "extracted_dir": audit_hit.get("extracted_dir", "") if audit_hit else "",
                     "unlocked_at_utc": audit_hit.get("ts_utc", "") if audit_hit else "",
                     "extracted_files_count": audit_hit.get("extracted_files_count", 0) if audit_hit else 0,
@@ -144,6 +164,7 @@ def scan_protected_zips(
         "total_protected_zips": len(items),
         "locked_count": sum(1 for i in items if i["status"] == "LOCKED_ALERT"),
         "unlocked_count": sum(1 for i in items if i["status"] == "UNLOCKED"),
+        "ignored_count": sum(1 for i in items if i["status"] == "IGNORED"),
         "items": items,
     }
 
@@ -255,9 +276,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source", action="append", default=[], help="Raizes de origem somente leitura.")
     parser.add_argument("--senhas-md", default=os.environ.get("ELO_SENHAS_MD", ""), help="Arquivo Senhas.md opcional.")
     parser.add_argument("--scan", action="store_true", help="Lista ZIPs protegidos e gera arquivo de consulta.")
-    parser.add_argument("--zip-path", default=None, help="Caminho do ZIP a desbloquear.")
+    parser.add_argument("--zip-path", default=None, help="Caminho do ZIP a desbloquear ou ignorar.")
     parser.add_argument("--password", default=None, help="Senha informada manualmente.")
     parser.add_argument("--use-lookup", action="store_true", help="Usa senha do arquivo de consulta.")
+    parser.add_argument("--ignore", action="store_true", help="Marca ZIP como ignorado no log auditavel.")
+    parser.add_argument("--reason", default="", help="Motivo opcional ao ignorar o arquivo.")
     args = parser.parse_args(argv)
 
     dest_root = Path(args.dest)
@@ -266,6 +289,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.scan:
         sources = tuple(Path(s) for s in (args.source or [r"E:\_DEFESA_COPIA_HD3_2026-09-21", r"E:\ANALISE_HD"]))
         res = scan_protected_zips(sources, dest_root, senhas_path)
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.zip_path and args.ignore:
+        res = ignore_zip_in_audit(Path(args.zip_path), dest_root, str(args.reason))
         print(json.dumps(res, ensure_ascii=False, indent=2))
         return 0
 
