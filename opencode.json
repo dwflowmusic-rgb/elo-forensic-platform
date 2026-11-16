@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "elo-forensic": {
+      "command": [
+        "/usr/bin/python3",
+        "-m",
+        "edrm.interfaces.cli",
+        "mcp-serve"
+      ],
+      "enabled": true,
+      "environment": {
+        "PYTHONHASHSEED": "42",
+        "PYTHONPATH": "/app/applet/src"
+      },
+      "type": "local"
+    }
+  }
+}

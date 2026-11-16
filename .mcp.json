@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "elo-forensic": {
+      "args": [
+        "-m",
+        "edrm.interfaces.cli",
+        "mcp-serve"
+      ],
+      "command": "/usr/bin/python3",
+      "env": {
+        "PYTHONHASHSEED": "42",
+        "PYTHONPATH": "/app/applet/src"
+      }
+    }
+  }
+}

@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+export PYTHONPATH="/app/applet/src:${PYTHONPATH:-}"
+export PYTHONHASHSEED="42"
+exec "/usr/bin/python3" -m edrm.interfaces.cli "$@"

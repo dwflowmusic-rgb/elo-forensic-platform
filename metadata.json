@@ -1,0 +1,6 @@
+{
+  "name": "ELO — Plataforma Forense EDRM 2.0",
+  "description": "Motor Universal Plug-and-Analyze de Auditoria Probatória e Descoberta Eletrônica Forense (EDRM 2.0, IGRM v4.1, ISO/IEC 27037/27041/27042 e POP Senasp Vol. 5).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

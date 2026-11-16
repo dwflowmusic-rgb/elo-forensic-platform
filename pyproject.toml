@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "elo-forensic"
+version = "2.2.0"
+description = "ELO — Motor Universal Plug-and-Analyze de Auditoria Probatoria e Descoberta Forense (EDRM 2.0 + Delta v2.2)"
+readme = "AGENTS.md"
+requires-python = ">=3.10"
+license = {text = "PolyForm-Noncommercial-1.0.0"}
+authors = [
+  {name = "ELO Forensic Systems Engineering"}
+]
+dependencies = []
+
+[project.scripts]
+elo = "edrm.interfaces.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["edrm*"]
